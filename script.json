@@ -1,0 +1,43 @@
+{
+  "version" : "1.1.0",
+  "localizedNames" : {
+    "ja" : "",
+    "de" : "",
+    "en" : "",
+    "es" : "",
+    "pt" : "",
+    "fr" : "",
+    "it" : "",
+    "ru" : "",
+    "zh" : ""
+  },
+  "runInApp" : false,
+  "remoteResource" : null,
+  "iconImage" : "",
+  "icon" : "thermometer.sun.fill",
+  "author" : {
+    "email" : "x999988@outlook.com",
+    "name" : "Soon Will",
+    "homepage" : null
+  },
+  "description" : "",
+  "localizedDescriptions" : {
+    "ja" : "",
+    "de" : "",
+    "en" : "",
+    "es" : "",
+    "pt" : "",
+    "fr" : "",
+    "it" : "",
+    "ru" : "",
+    "zh" : ""
+  },
+  "color" : "rgba(0, 198, 165,1)",
+  "intentInputTypes" : [
+
+  ],
+  "contributors" : [
+
+  ],
+  "name" : "app启动台"
+}
