@@ -1,6 +1,6 @@
 import { Path } from "scripting"
 import { loadConfig } from "./config"
-import { sourceFor } from "./resources"
+import { resolveDirectory, sourceFor } from "./resources"
 
 export type ModuleInfo = {
   name: string
@@ -13,7 +13,6 @@ export type ModuleInfo = {
   content?: string
 }
 
-const BASE_DIR_NAME = "SurgeModulesManager"
 const MODULES_DIR_NAME = "Modules"
 
 function fmOrThrow(): any {
@@ -39,83 +38,26 @@ function normalizePath(path: string): string {
   return String(path ?? "").replace(/\/+$/, "")
 }
 
-function pickRootDir(): string {
-  const fm = fmOrThrow()
-  if (fm.isiCloudEnabled && fm.iCloudDocumentsDirectory) {
-    return fm.iCloudDocumentsDirectory
-  }
-  return fm.documentsDirectory || fm.appGroupDocumentsDirectory || fm.scriptsDirectory || ""
-}
-
 export function getBaseDir(): string {
-  const cfg = loadConfig()
-  if (cfg.baseDir) return cfg.baseDir
-  return Path.join(pickRootDir(), BASE_DIR_NAME)
+  const name: string = loadConfig().baseBookmarkName
+  const path: string | null = name ? FileManager.bookmarkedPath(name) : null
+  if (!path || !FileManager.isDirectorySync(path)) throw new Error("请先在设置中选择可用的模块书签文件夹")
+  return path
 }
 
 export function getModulesDir(): string {
-  const cfg = loadConfig()
-  if (cfg.baseDir) return cfg.baseDir
-  return Path.join(getBaseDir(), MODULES_DIR_NAME)
-}
-
-async function resolveBookmarkedPath(rawPath: string, bookmarkName?: string): Promise<string> {
-  const fm = fmOrThrow()
-  const raw = String(rawPath ?? "").trim()
-  const name = String(bookmarkName ?? "").trim()
-  if (!raw && !name) return ""
-  if (!fm?.bookmarkedPath) return raw
-
-  if (name) {
-    let nameExists = true
-    if (fm?.bookmarkExists) {
-      const existed = await callMaybeAsync(fm.bookmarkExists, fm, [name])
-      nameExists = !!existed
-    }
-    if (nameExists) {
-      const byName = await callMaybeAsync(fm.bookmarkedPath, fm, [name])
-      if (byName) return String(byName)
-    }
-  }
-  if (!fm?.getAllFileBookmarks) return raw
-
-  const list = await callMaybeAsync(fm.getAllFileBookmarks, fm, [])
-  const arr = Array.isArray(list) ? list : []
-  const target = normalizePath(raw)
-  const match = arr.find((b: any) => {
-    const p = normalizePath(String(b?.path ?? ""))
-    const n = String(b?.name ?? "")
-    return (p && p === target) || (name ? n === name : false)
-  })
-  if (match?.name) {
-    const resolved = await callMaybeAsync(fm.bookmarkedPath, fm, [match.name])
-    if (resolved) return String(resolved)
-  }
-
-  // If bookmark name is configured but cannot be resolved, do not trust stale raw path.
-  if (name) return ""
-  return raw
+  return getBaseDir()
 }
 
 export async function getModulesDirResolved(baseDir?: string): Promise<string> {
-  const cfg = loadConfig()
-  const configured = String(cfg.baseDir ?? "").trim()
-  const bookmarkName = String(cfg.baseBookmarkName ?? "").trim()
-  const target = String(baseDir ?? "").trim()
-  if (!configured && !target) return getModulesDir()
-
-  if (!target) {
-    if (!configured) return getModulesDir()
-    const resolved = await resolveBookmarkedPath(configured, bookmarkName)
-    if (resolved) return resolved
-    return bookmarkName ? "" : configured
+  const configured: string = normalizePath(loadConfig().baseDir)
+  const root: string = normalizePath(await resolveDirectory("module", "surge"))
+  const target: string = normalizePath(String(baseDir ?? "").trim())
+  if (!target || target === configured || target === root) return root
+  if (!target.startsWith(`${root}/`) || target.split("/").some((part: string): boolean => part === "." || part === "..")) {
+    throw new Error("目标目录不在当前模块书签文件夹内，请刷新后重试")
   }
-
-  if (configured && normalizePath(target) === normalizePath(configured)) {
-    const resolved = await resolveBookmarkedPath(target, bookmarkName)
-    if (resolved) return resolved
-    return bookmarkName ? "" : target
-  }
+  if (!(await FileManager.isDirectory(target))) throw new Error("目标文件夹不可用")
   return target
 }
 
@@ -141,19 +83,8 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 export async function ensureStorage(): Promise<void> {
-  const cfg = loadConfig()
-  if (cfg.baseDir) {
-    const resolved = await getModulesDirResolved(cfg.baseDir)
-    if (!resolved) {
-      throw new Error("书签路径不可用，请在设置页重新选择书签文件夹")
-    }
-    await ensureDir(resolved)
-    return
-  }
-  await ensureDir(getBaseDir())
-  if (!cfg.baseDir) {
-    await ensureDir(getModulesDir())
-  }
+  // 授权根目录必须已经存在，不能创建默认本地目录替代它。
+  await getModulesDirResolved()
 }
 
 function extractNameFromPath(p: string): string {
@@ -375,7 +306,7 @@ export async function saveLocalModule(info: ModuleInfo, rawContent: string): Pro
   await ensureStorage()
   const fm = fmOrThrow()
   if (!fm?.writeAsString) throw new Error("FileManager.writeAsString 不可用")
-  const targetDir = info.saveDir ?? (await getModulesDirResolved())
+  const targetDir = await getModulesDirResolved(info.saveDir)
   await ensureDir(targetDir)
   const path = moduleFilePath(info.name, targetDir)
   if (await exists(path)) {
