@@ -12,6 +12,8 @@ import {
   HStack,
   Spacer,
   Picker,
+  Menu,
+  Image,
   useEffect,
   useState,
 } from "scripting"
@@ -23,7 +25,7 @@ import {
   type AppConfig,
 } from "../utils/config"
 import { countModulesByCategory, loadCategoriesFromModules, renameCategoryInModules } from "../utils/storage"
-import { savedBookmark, storeBookmark, type DirectoryBookmark } from "../utils/resources"
+import { savedBookmark, storeBookmark } from "../utils/resources"
 import { type ResourceKind, resourceLabel } from "../utils/resource_policy"
 
 function PlainRowButton(props: { title: string; onPress: () => void }) {
@@ -55,102 +57,79 @@ export function SettingsView(props: {
   const [cfg, setCfg] = useState<AppConfig>(initialCfg)
 
   const [bookmarks, setBookmarks] = useState<{ name: string; path: string }[]>([])
-  const [bookmarkIdx, setBookmarkIdx] = useState<number>(0)
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
   const [ruleBookmark, setRuleBookmark] = useState<string>(() => savedBookmark("rule"))
   const [authorizing, setAuthorizing] = useState<boolean>(false)
 
-  async function authorize(kind: ResourceKind): Promise<void> {
-    if (authorizing) return
-    setAuthorizing(true)
-    try {
-      const bookmark: DirectoryBookmark | null = await DocumentPicker.pickDirectoryBookmark({ preferredName: `Surge整体管理-${resourceLabel(kind)}-${Date.now()}` })
-      if (!bookmark) return
-      const otherName: string = kind === "module" ? ruleBookmark : cfg.baseBookmarkName
-      const otherPath: string | null = otherName ? FileManager.bookmarkedPath(otherName) : null
-      if (otherPath === bookmark.path && !(await Dialog.confirm({ title: "两类使用同一目录", message: "通常模块和分流应选择不同文件夹，仍然使用？" }))) return
-      storeBookmark(kind, bookmark)
-      if (kind === "module") {
-        const next: AppConfig = { ...cfg, baseDir: bookmark.path, baseBookmarkName: bookmark.bookmarkName }
-        setCfg(next)
-        await refreshBookmarks(next)
-        await refreshCounts(next)
-      } else {
-        setRuleBookmark(bookmark.bookmarkName)
-      }
-    } catch (error: unknown) {
-      await Dialog.alert({ title: "授权失败", message: String(error instanceof Error ? error.message : error) })
-    } finally {
-      setAuthorizing(false)
-    }
-  }
   const concurrencyOptions = Array.from({ length: 10 }, (_, idx) => idx + 1)
 
   useEffect(() => {
     setCfg(props.initial ?? loadConfig())
-    void refreshBookmarks(props.initial ?? loadConfig())
+    void refreshBookmarks()
     void refreshCounts(props.initial ?? loadConfig())
   }, [])
 
-  function isPromiseLike(v: any): v is Promise<any> {
-    return !!v && typeof v === "object" && typeof v.then === "function"
-  }
-
-  async function callMaybeAsync(fn: any, thisArg: any, args: any[]) {
+  async function refreshBookmarks(): Promise<void> {
     try {
-      const r = fn.apply(thisArg, args)
-      return isPromiseLike(r) ? await r : r
+      const folders: { name: string; path: string }[] = []
+      for (const bookmark of FileManager.getAllFileBookmarks()) {
+        // 书签也可能指向文件；离线书签保留展示，但使用前必须重新校验。
+        if (bookmark.name && (!bookmark.path || await FileManager.isDirectory(bookmark.path))) folders.push(bookmark)
+      }
+      setBookmarks(folders)
     } catch {
-      return undefined
+      setBookmarks([])
     }
   }
 
-  async function refreshBookmarks(current?: AppConfig): Promise<{ name: string; path: string }[]> {
-    const fm: any = (globalThis as any).FileManager
-    let list: any = []
-    if (fm?.getAllFileBookmarks) {
-      try {
-        const r = fm.getAllFileBookmarks()
-        list = r && typeof r.then === "function" ? await r : r
-      } catch {
-        list = []
-      }
-    }
-    const arr = Array.isArray(list) ? list : []
-    const cleaned = arr
-      .map((x: any) => ({ name: String(x?.name ?? ""), path: String(x?.path ?? "") }))
-      .filter((x: any) => x.name && x.path)
-    setBookmarks(cleaned)
-
-    const targetName = current?.baseBookmarkName ?? cfg.baseBookmarkName
-    const targetPath = current?.baseDir ?? cfg.baseDir
-    if (cleaned.length) {
-      let idx = -1
-      if (targetName) idx = cleaned.findIndex((b) => b.name === targetName)
-      if (idx < 0 && targetPath) idx = cleaned.findIndex((b) => b.path === targetPath)
-      setBookmarkIdx(idx >= 0 ? idx : 0)
-      if (idx >= 0) {
-        const matched = cleaned[idx]
-        const canUseByName = fm?.bookmarkExists
-          ? !!(await callMaybeAsync(fm.bookmarkExists, fm, [matched.name]))
-          : true
-        const resolved = fm?.bookmarkedPath && canUseByName
-          ? String((await callMaybeAsync(fm.bookmarkedPath, fm, [matched.name])) ?? matched.path)
-          : matched.path
-        const pathChanged = resolved !== targetPath || matched.name !== targetName
-        if (pathChanged) {
-          setCfg((c) => ({ ...c, baseDir: resolved, baseBookmarkName: matched.name }))
-          try {
-            const next = { ...loadConfig(), baseDir: resolved, baseBookmarkName: matched.name }
-            saveConfig(next)
-            props.onDone?.(next)
-          } catch {}
-        }
-      }
+  async function applyBookmark(kind: ResourceKind, name: string): Promise<void> {
+    const path: string | null = FileManager.bookmarkedPath(name)
+    if (!path) throw new Error("书签文件夹暂不可用，请检查文件提供商或重新授权")
+    if (!(await FileManager.isDirectory(path))) throw new Error("所选书签不是文件夹")
+    const otherName: string = kind === "module" ? ruleBookmark : cfg.baseBookmarkName
+    const otherPath: string | null = otherName ? FileManager.bookmarkedPath(otherName) : null
+    if (otherPath === path && !(await Dialog.confirm({ title: "两类使用同一目录", message: "通常模块和分流应选择不同文件夹，仍然使用？" }))) return
+    if (kind === "module") {
+      const next: AppConfig = { ...cfg, baseDir: path, baseBookmarkName: name }
+      saveConfig(next)
+      setCfg(next)
+      props.onDone?.(next)
+      await refreshCounts(next)
     } else {
-      setBookmarkIdx(0)
+      storeBookmark(kind, { path, bookmarkName: name })
+      setRuleBookmark(name)
     }
-    return cleaned
+  }
+
+  async function selectBookmark(kind: ResourceKind, name: string): Promise<void> {
+    if (!name || authorizing) return
+    setAuthorizing(true)
+    try {
+      await applyBookmark(kind, name)
+    } catch (error: unknown) {
+      await Dialog.alert({ title: "选择失败", message: String(error instanceof Error ? error.message : error) })
+    } finally {
+      setAuthorizing(false)
+    }
+  }
+
+  function bookmarkPicker(kind: ResourceKind): JSX.Element {
+    const selected: string = kind === "module" ? cfg.baseBookmarkName : ruleBookmark
+    return (
+      <Menu disabled={authorizing || bookmarks.length === 0} label={
+        <HStack>
+          <Text foregroundStyle="label">{resourceLabel(kind)}书签文件夹</Text>
+          <Spacer />
+          {selected ? <Text lineLimit={1}>{selected}</Text> : null}
+          <Image systemName="chevron.up.chevron.down" font="caption" />
+        </HStack>
+      }>
+        {bookmarks.map((bookmark) => (
+          <Button key={bookmark.name} title={bookmark.name} systemImage={bookmark.name === selected ? "checkmark" : undefined}
+            action={(): void => { void selectBookmark(kind, bookmark.name) }} />
+        ))}
+      </Menu>
+    )
   }
 
   async function refreshCounts(current?: AppConfig) {
@@ -270,59 +249,9 @@ async function deleteCategoryAt(indices: number[]): Promise<void> {
         }}
       >
         <Form formStyle="grouped">
-          <Section header={<Text>模块目录 · 独立授权</Text>}>
-            <Button title="选择 / 重新授权模块文件夹" disabled={authorizing} action={(): void => { void authorize("module") }} />
-            <TextField
-              label={<Text>路径</Text>}
-              value={cfg.baseDir}
-              onChanged={(v: string) => setCfg((c) => ({ ...c, baseDir: v, baseBookmarkName: "" }))}
-              prompt="粘贴或选择目录"
-              textFieldStyle="roundedBorder"
-            />
-            <Text font="caption" foregroundStyle="secondaryLabel">
-              授权立即生效；已有书签和旧路径保留兼容。只粘贴路径不代表取得授权。
-            </Text>
-            {bookmarks.length ? (
-              <Picker
-                title={"书签文件夹"}
-                pickerStyle="menu"
-                value={bookmarkIdx}
-                onChanged={(idx: number) => {
-                  HapticFeedback.heavyImpact()
-                  setBookmarkIdx(idx)
-                  const b = bookmarks[idx]
-                  if (b?.path) {
-                    void (async () => {
-                      const fm: any = (globalThis as any).FileManager
-                      const canUseByName = fm?.bookmarkExists
-                        ? !!(await callMaybeAsync(fm.bookmarkExists, fm, [b.name]))
-                        : true
-                      const resolved = fm?.bookmarkedPath && canUseByName
-                        ? String((await callMaybeAsync(fm.bookmarkedPath, fm, [b.name])) ?? b.path)
-                        : b.path
-                      const next: AppConfig = { ...cfg, baseDir: resolved, baseBookmarkName: b.name }
-                      setCfg(next)
-                      try {
-                        saveConfig(next)
-                        props.onDone?.(next)
-                      } catch {}
-                    })()
-                  }
-                }}
-              >
-                {bookmarks.map((b, index) => (
-                  <Text key={b.name} tag={index}>
-                    {b.name}
-                  </Text>
-                ))}
-              </Picker>
-            ) : null}
-          </Section>
-
-          <Section header={<Text>分流目录 · 独立授权</Text>}>
-            <Text font="caption" foregroundStyle="secondaryLabel">{ruleBookmark || "未授权 · 本地下载仍可使用"}</Text>
-            <Button title="选择 / 重新授权分流文件夹" disabled={authorizing} action={(): void => { void authorize("rule") }} />
-            <Text font="caption" foregroundStyle="secondaryLabel">分流文件原样保存，不修改 RULE-SET 引用。本地模块和分流不依赖上述授权。</Text>
+          <Section header={<Text>文件夹</Text>}>
+            {bookmarkPicker("module")}
+            {bookmarkPicker("rule")}
           </Section>
           <Section header={<Text>HTTP 远程控制 · 模块开关</Text>}>
             <TextField title="地址" value={cfg.remoteHost} prompt="http://127.0.0.1" keyboardType="URL" onChanged={(value: string): void => setCfg((current: AppConfig): AppConfig => ({ ...current, remoteHost: value }))} />
