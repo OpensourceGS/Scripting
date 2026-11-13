@@ -22,13 +22,9 @@ export function storeBookmark(kind: ResourceKind, bookmark: DirectoryBookmark): 
   }
 }
 
-export function localDirectory(kind: ResourceKind): string {
-  return Path.join(FileManager.documentsDirectory, "SurgeOverallManager", kind === "module" ? "Modules" : "Rules")
-}
-
 export async function resolveDirectory(kind: ResourceKind, destination: Destination): Promise<string> {
-  // 本地分支必须先返回，完全不读取或恢复 Surge 的授权。
-  if (destination === "local") return localDirectory(kind)
+  // 兼容旧调用的参数，但不再允许访问默认本地目录。
+  if (destination !== "surge") throw new Error("本地目录模式已停用，请先在设置中选择书签文件夹")
   const bookmark: string = savedBookmark(kind)
   if (bookmark) {
     const resolved: string | null = FileManager.bookmarkedPath(bookmark)
@@ -139,7 +135,6 @@ export async function downloadResource(
     if (batch) await verifyBatch()
     else if (!existed && !(await confirmWrite(path))) return null
     if (await FileManager.isLink(path) || (await FileManager.exists(path) && !(await FileManager.isFile(path)))) throw new Error("目标不是普通文件，拒绝覆盖")
-    if (destination === "local" && !(await FileManager.exists(dir))) await FileManager.createDirectory(dir, true)
     // 下载完成后才写目标；分流内容保持原始字节，不注入模块元数据。
     await FileManager.writeAsBytes(path, bytes)
     saveSource(path, url)
