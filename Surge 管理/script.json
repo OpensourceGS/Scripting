@@ -1,0 +1,42 @@
+{
+  "runInApp": false,
+  "author": {
+    "email": null,
+    "name": "Soon Will",
+    "homepage": null
+  },
+  "intentInputTypes": [],
+  "remoteResource": null,
+  "name": "Surge 管理 ",
+  "description": "surge 的模块，分流本地管理工具",
+  "permissions": null,
+  "icon": "square.grid.2x2.fill",
+  "color": "rgba(28, 140, 255,1)",
+  "localizedNames": {
+    "zh": "",
+    "it": "",
+    "ja": "",
+    "pt": "",
+    "es": "",
+    "ru": "",
+    "fr": "",
+    "en": "",
+    "de": ""
+  },
+  "contributors": [],
+  "entry": "index.tsx",
+  "localizedDescriptions": {
+    "zh": "",
+    "ja": "",
+    "it": "",
+    "ru": "",
+    "en": "",
+    "pt": "",
+    "fr": "",
+    "es": "",
+    "de": ""
+  },
+  "remoteDefinitionId": null,
+  "iconImage": "https://raw.githubusercontent.com/BlackCCCat/Scripting-Scripts/refs/heads/main/src/Surge-Module-Manager.PNG",
+  "version": "2.1.5"
+}
