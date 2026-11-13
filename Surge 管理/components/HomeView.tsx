@@ -77,7 +77,7 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
   const categories = cfg.categories ?? []
   const filterOptions = ["全部", ...categories]
   const filterIdx = Math.max(0, filterOptions.indexOf(filterCategory))
-  const baseDir = resolvedBaseDir || cfg.baseDir
+  const baseDir = resolvedBaseDir
   const dirOptions = useMemo(() => {
     const set = new Set<string>()
     for (const m of modules) {
@@ -503,7 +503,7 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
       {/* Own the List; selection chrome is a stable sibling, never a row. */}
         <Section>
           <HStack spacing={12}>
-            <ActionTileButton title="添加" systemImage="plus.square.on.square" tint="systemBlue" onPress={withButtonHaptic(addModule, false)} disabled={scanning || busy || togglingModuleNames.size > 0} />
+            <ActionTileButton title="添加" systemImage="plus.square.on.square" tint="systemBlue" onPress={withButtonHaptic(addModule, false)} disabled={!resolvedBaseDir || scanning || busy || togglingModuleNames.size > 0} />
             <ActionTileButton title="更新" systemImage="arrow.triangle.2.circlepath.circle.fill" tint="systemGreen" onPress={withButtonHaptic(downloadAll, false)} disabled={scanning || busy || togglingModuleNames.size > 0 || !filteredModules.length || onlyLocalFiltered} />
           </HStack>
           <TextField title="搜索模块" value={query} prompt="搜索模块 · 名称 / 分类" frame={{ maxWidth: "infinity", minHeight: 44 }} onChanged={(value: string): void => setQuery(value)} />
