@@ -1,4 +1,4 @@
-import { Button, HStack, List, Navigation, NavigationStack, Picker, ProgressView, Section, Spacer, Text, TextField, VStack, ZStack, useEffect, useRef, useState } from "scripting"
+import { Button, HStack, List, Navigation, NavigationStack, ProgressView, Section, Spacer, Text, TextField, VStack, ZStack, useEffect, useRef, useState } from "scripting"
 import { BatchProgress } from "./BatchProgress"
 import { loadConfig } from "../utils/config"
 import { runBatchPool, type BatchResult, type BatchSnapshot } from "../utils/batch_pool"
@@ -16,13 +16,13 @@ type Scope = { kind: ResourceKind; destination: Destination }
 const SCOPE_KEY: string = "surge_overall_scope_v1"
 function savedScope(): Scope {
   const raw: Partial<Scope> | null = Storage.get<Partial<Scope>>(SCOPE_KEY)
-  return { kind: raw?.kind === "rule" ? "rule" : "module", destination: raw?.destination === "surge" ? "surge" : "local" }
+  return { kind: raw?.kind === "rule" ? "rule" : "module", destination: "surge" }
 }
 
 export function OverallView() {
   const [initialScope] = useState<Scope>(savedScope)
   const [kind, setKind] = useState<ResourceKind>(initialScope.kind)
-  const [destination, setDestination] = useState<Destination>(initialScope.destination)
+  const destination: Destination = "surge"
   const [modulesVisited, setModulesVisited] = useState<boolean>(initialScope.kind === "module" && initialScope.destination === "surge")
   const [files, setFiles] = useState<ResourceFile[]>([])
   const [directory, setDirectory] = useState<string>("")
@@ -108,7 +108,6 @@ export function OverallView() {
     if (nextDestination !== destination) setModulesVisited(nextKind === "module" && nextDestination === "surge")
     else if (nextKind === "module" && nextDestination === "surge") setModulesVisited(true)
     setKind(nextKind)
-    setDestination(nextDestination)
   }
 
   async function openSettings(): Promise<void> {
@@ -125,7 +124,7 @@ export function OverallView() {
     const input: string | null = await Dialog.prompt({ title: file ? `更新 ${file.name}` : `下载${label}`, message: "HTTP / HTTPS 链接；文件原样保存", defaultValue: file?.link ?? "", placeholder: "https://…" })
     if (input === null) return
     const url: string = validateURL(input)
-    const name: string | null = file?.name ?? await Dialog.prompt({ title: "保存文件名", message: `保存到：${destination === "local" ? "Scripting 本地" : "Surge 授权目录"}`, defaultValue: suggestedName(url, kind) })
+    const name: string | null = file?.name ?? await Dialog.prompt({ title: "保存文件名", message: `保存到：${directory || "所选书签文件夹"}`, defaultValue: suggestedName(url, kind) })
     if (name === null) return
     setStatus(`正在下载：${name}`)
     const path: string | null = await downloadResource(kind, destination, name, url, (value: DownloadProgress): void => {
@@ -157,7 +156,7 @@ export function OverallView() {
     }) : undefined
     const confirmed: boolean = await Dialog.confirm({
       title: `批量更新${label}`,
-      message: `当前搜索筛选共 ${selected.length} 个文件，将更新其中 ${candidates.length} 个；无${batch ? "有效" : ""}来源 ${selected.length - candidates.length} 个将跳过。目标：${destination === "local" ? "Scripting 本地" : "Surge 授权目录"}。${batch ? "确认后将自动下载并覆盖以上筛选范围的分流文件，不再逐个确认；单项失败继续。" : "每个已有文件仍会单独确认覆盖，取消该文件则跳过。"}继续？`,
+      message: `当前搜索筛选共 ${selected.length} 个文件，将更新其中 ${candidates.length} 个；无${batch ? "有效" : ""}来源 ${selected.length - candidates.length} 个将跳过。目标：${directory || "所选书签文件夹"}。${batch ? "确认后将自动下载并覆盖以上筛选范围的分流文件，不再逐个确认；单项失败继续。" : "每个已有文件仍会单独确认覆盖，取消该文件则跳过。"}继续？`,
       confirmLabel: batch ? "全部更新并覆盖" : "继续逐项确认",
       cancelLabel: "取消",
     })
@@ -259,12 +258,9 @@ export function OverallView() {
           <VStack spacing={8} alignment="leading" padding={{ horizontal: 20, top: 8 }}>
           <ScopeTabs value={kind} disabled={busy || moduleBusy || editing !== null} onChanged={(value: ResourceKind): void => switchScope(value, destination)} />
           <HStack>
-            <Picker title="位置" pickerStyle="menu" value={destination} disabled={busy || moduleBusy || editing !== null} onChanged={(value: string): void => switchScope(kind, value === "surge" ? "surge" : "local")}>
-              <Text tag="local">Scripting 本地</Text>
-              <Text tag="surge">Surge 文件夹</Text>
-            </Picker>
+            <Text font="caption" foregroundStyle="secondaryLabel">书签文件夹</Text>
             <Spacer />
-            <Text font="caption" foregroundStyle="secondaryLabel">{destination === "local" ? "无需授权" : managedModules ? "模块页独立校验授权" : directory ? "目录可用" : "目录未就绪"}</Text>
+            <Text font="caption" foregroundStyle="secondaryLabel">{managedModules ? "使用已选模块目录" : directory ? "目录可用" : "请先在设置中选择文件夹"}</Text>
           </HStack>
           </VStack>
   )
@@ -294,7 +290,7 @@ export function OverallView() {
             {batchProgress ? <BatchProgress snapshot={batchProgress} /> : progress !== null ? <ProgressView value={progress} total={1} progressViewStyle="linear" /> : null}
           </Section>
           <Section header={<Text>{`${label}文件 · ${visible.length}/${files.length}`}</Text>}>
-            {!loading && visible.length === 0 ? <Text foregroundStyle="secondaryLabel">{directory ? "暂无匹配文件" : "右上角设置授权目录，或切换到本地"}</Text> : null}
+            {!loading && visible.length === 0 ? <Text foregroundStyle="secondaryLabel">{directory ? "暂无匹配文件" : "请在右上角设置中选择分流书签文件夹后使用"}</Text> : null}
             {visible.map((file: ResourceFile) => (
               <VStack key={file.path} alignment="leading" spacing={6} transition={Transition.opacity()}
                 leadingSwipeActions={{ allowsFullSwipe: false, actions: [
