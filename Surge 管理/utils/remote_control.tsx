@@ -42,6 +42,7 @@ export async function fetchEnabledModuleNames(cfg: AppConfig): Promise<Set<strin
   const res = await fetchFn(`${baseURL}/v1/modules`, {
     method: "GET",
     headers: remoteHeaders(cfg),
+    timeout: 8,
   })
   if (!res?.ok) throw new Error(`请求失败：${res?.status ?? "unknown"}`)
   const data = await res.json()
