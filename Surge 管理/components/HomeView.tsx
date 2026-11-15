@@ -1,15 +1,16 @@
 import {
   Button,
   Group,
+  DisclosureGroup,
   HStack,
+  Image,
+  RoundedRectangle,
   List,
   Navigation,
-  Picker,
   ProgressView,
   Section,
   Spacer,
   Text,
-  TextField,
   Toggle,
   VStack,
   useEffect,
@@ -34,6 +35,13 @@ import { loadConfig, type AppConfig } from "../utils/config"
 import { downloadModule } from "../utils/downloader"
 import { EditModuleView } from "./EditModuleView"
 import { ActionTileButton } from "./ActionTileButton"
+import { ResourceSearchBar } from "./ResourceSearchBar"
+import { ResourceOverview } from "./ResourceOverview"
+import { UpdateBadge } from "./UpdateBadge"
+import { baseStatus, cachedUpdateStates, checkForUpdates, checkTarget, updateSummary, type UpdateStatus } from "../utils/update_check"
+import { CategoryLabel } from "./CategoryLabel"
+import { animateState, playFeedback } from "../utils/motion"
+import { groupModules } from "../utils/module_groups"
 import { resolveDirectory } from "../utils/resources"
 import {
   fetchEnabledModuleNames,
@@ -41,7 +49,7 @@ import {
   setRemoteModuleEnabled,
 } from "../utils/remote_control"
 
-export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
+export function HomeView(props: { onBusyChanged?: (busy: boolean) => void; active?: boolean; initialQuery?: string }) {
   const scanPending: { current: boolean } = useRef<boolean>(true)
   const [scanning, setScanning] = useState<boolean>(true)
   const scanGeneration: { current: number } = useRef<number>(0)
@@ -50,9 +58,9 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
   const withButtonHaptic: (action: () => void | Promise<void>, haptic?: boolean) => () => Promise<void> = (action: () => void | Promise<void>, haptic: boolean = true) => async (): Promise<void> => {
     if (scanPending.current || actionLock.current || busy || togglingModuleNames.size > 0) return
     actionLock.current = true
-    setBusy(true)
-    if (haptic) HapticFeedback.mediumImpact()
     try {
+      setBusy(true)
+      if (haptic) playFeedback(() => HapticFeedback.softImpact())
       await action()
     } catch (error: unknown) {
       await Dialog.alert({ message: error instanceof Error ? error.message : String(error) })
@@ -63,33 +71,21 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
   }
   // Settings changes remount this scoped host via revision, never reuse old credentials.
   const cfg: AppConfig = useMemo<AppConfig>(loadConfig, [])
-  const [query, setQuery] = useState<string>("")
+  const [query, setQuery] = useState<string>(props.initialQuery ?? "")
   const [modules, setModules] = useState<ModuleInfo[]>([])
+  const [updateStates, setUpdateStates] = useState<Record<string, UpdateStatus>>({})
   const [stage, setStage] = useState("就绪")
   const [progress, setProgress] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [resolvedBaseDir, setResolvedBaseDir] = useState("")
-  const [filterCategory, setFilterCategory] = useState("全部")
+  const [expandedCategories, setExpandedCategories] = useState<Map<string, boolean>>(new Map())
   const [enabledModuleNames, setEnabledModuleNames] = useState<Set<string>>(new Set())
   const [togglingModuleNames, setTogglingModuleNames] = useState<Set<string>>(new Set())
   const [remoteStatus, setRemoteStatus] = useState<string>("远程状态读取中")
-  useEffect((): void => { props.onBusyChanged?.(busy || togglingModuleNames.size > 0) }, [busy, togglingModuleNames])
+  useEffect((): void => { props.onBusyChanged?.(busy || scanning || togglingModuleNames.size > 0) }, [busy, scanning, togglingModuleNames])
   const categories = cfg.categories ?? []
-  const filterOptions = ["全部", ...categories]
-  const filterIdx = Math.max(0, filterOptions.indexOf(filterCategory))
   const baseDir = resolvedBaseDir
-  const dirOptions = useMemo(() => {
-    const set = new Set<string>()
-    for (const m of modules) {
-      const p = m.filePath ? String(m.filePath) : ""
-      if (!p) continue
-      const rel = baseDir ? p.replace(baseDir, "").replace(/^\/+/, "") : p
-      const dir = rel.includes("/") ? rel.split("/")[0] : ""
-      if (dir) set.add(dir)
-    }
-    return ["全部", ...Array.from(set)]
-  }, [modules, baseDir])
-  const [filterDir, setFilterDir] = useState("全部")
+  const searching = query.trim().length > 0
 
   function getTopDir(m: ModuleInfo): string {
     const p = m.filePath ? String(m.filePath) : ""
@@ -99,16 +95,16 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
   }
 
   function matchFilters(m: ModuleInfo): boolean {
-    const catOk = filterCategory === "全部" ? true : m.category === filterCategory
-    const dirOk = filterDir === "全部" ? true : getTopDir(m) === filterDir
-    return catOk && dirOk && `${m.name} ${m.category ?? ""}`.toLowerCase().includes(query.toLowerCase())
+    return `${m.name} ${m.category?.trim() || "未分类"} ${getTopDir(m)}`.toLowerCase().includes(query.trim().toLowerCase())
   }
 
   const filteredModules = modules.filter((m) => {
     return matchFilters(m)
   })
-  const onlyLocalFiltered =
-    filteredModules.length > 0 && filteredModules.every((m: ModuleInfo): boolean => !m.link?.trim())
+  const moduleGroups = groupModules(filteredModules, categories)
+  const hasCategories = modules.some(m => !!m.category?.trim())
+  function updateState(module: ModuleInfo): UpdateStatus { return updateStates[module.filePath ?? ""] ?? baseStatus(module.link) }
+  const updatesAvailable = filteredModules.filter(module => updateState(module).state === "available").length
   const remoteControlReady = !!String(cfg.remotePort ?? "").trim()
 
   function inferSaveDir(m: ModuleInfo): string | undefined {
@@ -117,7 +113,7 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
     return idx > 0 ? String(m.filePath).slice(0, idx) : undefined
   }
 
-  async function refreshModules(resetStageOnSuccess: boolean = false): Promise<void> {
+  async function refreshModules(resetStageOnSuccess: boolean = false, checkUpdates: boolean = false): Promise<void> {
     const token: number = ++scanGeneration.current
     scanPending.current = true
     setScanning(true)
@@ -128,14 +124,27 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
       if (token !== scanGeneration.current) return
       setResolvedBaseDir(resolved)
       setModules(list)
-      if (resetStageOnSuccess) {
-        setStage("就绪")
-        setProgress(null)
-      }
+      const targets = list.filter(module => !!module.filePath).map(module => checkTarget(module.filePath!, module.link, "module", cfg.linkPatternsText))
+      const cached = await cachedUpdateStates(targets)
+      if (token !== scanGeneration.current) return
+      setUpdateStates(cached)
+      if (checkUpdates) {
+        setStage("正在检查来源更新…")
+        const states = await checkForUpdates(targets, (path, state, completed): void => {
+          if (token !== scanGeneration.current) return
+          setUpdateStates(previous => ({ ...previous, [path]: state }))
+          setStage(`检查更新 ${completed}/${targets.length} · 不覆盖文件`)
+        }, (): boolean => token === scanGeneration.current)
+        if (token !== scanGeneration.current) return
+        setUpdateStates(states)
+        setStage(`${updateSummary(Object.values(states))} · 5 分钟内复用缓存`)
+      } else if (resetStageOnSuccess) setStage("就绪")
+      if (resetStageOnSuccess) setProgress(null)
     } catch (e: any) {
       if (token !== scanGeneration.current) return
       setResolvedBaseDir("")
       setModules([])
+      setUpdateStates({})
       setStage(String(e?.message ?? e))
     } finally {
       if (token === scanGeneration.current) {
@@ -154,19 +163,6 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
     void refreshRemoteModules(true)
     return (): void => { remoteGeneration.current += 1 }
   }, [cfg.remotePort, cfg.remotePassword])
-
-  useEffect(() => {
-    if (filterDir !== "全部" && !dirOptions.includes(filterDir)) {
-      setFilterDir("全部")
-    }
-  }, [dirOptions, filterDir])
-
-  useEffect(() => {
-    if (filterCategory === "全部") return
-    if (!categories.includes(filterCategory)) {
-      setFilterCategory("全部")
-    }
-  }, [categories, filterCategory])
 
   async function refreshRemoteModules(silent: boolean = false, nextCfg: AppConfig = cfg): Promise<void> {
     const token: number = ++remoteGeneration.current
@@ -373,6 +369,7 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
       return
     }
     await downloadBatch([target], `下载模块：${target.name}`)
+    await refreshModules()
   }
 
   async function downloadBatch(list: ModuleInfo[], title: string) {
@@ -415,18 +412,26 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
           if (idx >= total) return
 
           const m = downloadable[idx]
-          const linkPrefix = await detectLinkPrefix(m)
-          const res = await downloadModule({ ...m, saveDir: inferSaveDir(m), linkPrefix, overwriteConfirmed: true })
-          if (res.ok) okCount += 1
-          else errors.push(`${m.name}: ${res.message ?? "下载失败"}`)
-
-          completed += 1
-          updateOverallProgress()
+          try {
+            const linkPrefix = await detectLinkPrefix(m)
+            const res = await downloadModule({ ...m, saveDir: inferSaveDir(m), linkPrefix, overwriteConfirmed: true })
+            if (res.ok) okCount += 1
+            else errors.push(`${m.name}: ${res.message ?? "下载失败"}`)
+          } catch (error: unknown) {
+            errors.push(`${m.name}: ${error instanceof Error ? error.message : String(error)}`)
+          } finally {
+            completed += 1
+            updateOverallProgress()
+          }
         }
       }
 
       const workers = Array.from({ length: concurrency }, () => worker())
-      await Promise.all(workers)
+      // 即使某个 worker 出现意外异常，也等所有写入结束，不能提前释放操作锁。
+      const settled = await Promise.allSettled(workers)
+      for (const result of settled) {
+        if (result.status === "rejected") errors.push(`任务异常：${String(result.reason)}`)
+      }
 
       if (errors.length) {
         setStage(`下载完成：成功 ${okCount}/${total}`)
@@ -449,8 +454,11 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
 
   async function downloadAll() {
     const current = await loadModules()
-    const list: ModuleInfo[] = current.filter(matchFilters)
-    await downloadBatch(list, "下载全部模块…")
+    const list: ModuleInfo[] = current.filter(module => matchFilters(module) && updateState(module).state === "available"
+      && modules.some(displayed => displayed.filePath === module.filePath && displayed.link === module.link))
+    if (!list.length) { setStage("没有已确认的更新，请先点击刷新检查"); return }
+    await downloadBatch(list, "更新有变化的模块…")
+    await refreshModules()
   }
 
   async function toggleRemoteModule(target: ModuleInfo, nextValue: boolean) {
@@ -465,18 +473,20 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
       return
     }
 
-    remoteGeneration.current += 1
-    HapticFeedback.heavyImpact()
-    setTogglingModuleNames((prev) => new Set([...prev, remoteName]))
-    setEnabledModuleNames((prev) => {
-      const next = new Set(prev)
-      if (nextValue) next.add(remoteName)
-      else next.delete(remoteName)
-      return next
-    })
-
+    // ref 同步占锁，防止状态刷新前的连续回调重复进入。
+    actionLock.current = true
     try {
+      remoteGeneration.current += 1
+      playFeedback(() => HapticFeedback.softImpact())
+      setTogglingModuleNames((prev) => new Set([...prev, remoteName]))
+      setEnabledModuleNames((prev) => {
+        const next = new Set(prev)
+        if (nextValue) next.add(remoteName)
+        else next.delete(remoteName)
+        return next
+      })
       await setRemoteModuleEnabled(cfg, remoteName, nextValue)
+      playFeedback(() => HapticFeedback.notificationSuccess())
     } catch (e: any) {
       setEnabledModuleNames((prev) => {
         const next = new Set(prev)
@@ -484,11 +494,13 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
         else next.add(remoteName)
         return next
       })
+      playFeedback(() => HapticFeedback.notificationError())
       await Dialog.alert({
         title: "远程控制失败",
         message: `${remoteName}\n${String(e?.message ?? e)}`,
       })
     } finally {
+      actionLock.current = false
       setTogglingModuleNames((prev) => {
         const next = new Set(prev)
         next.delete(remoteName)
@@ -499,77 +511,49 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
 
 
   return (
-    <List listStyle="insetGroup">
+    <VStack spacing={0}>
+      <VStack padding={{ horizontal: 20, top: 12, bottom: 4 }}>
+        <ResourceSearchBar value={query} onChanged={setQuery} prompt="搜索名称、分类或文件夹" accent="systemTeal" active={props.active ?? true} />
+      </VStack>
+    <List listStyle="insetGroup" scrollDismissesKeyboard="interactively" listSectionSpacing={18} contentMargins={{ edges: "top", insets: 12 }} tint="systemTeal">
       {/* Own the List; selection chrome is a stable sibling, never a row. */}
         <Section>
-          <HStack spacing={12}>
-            <ActionTileButton title="添加" systemImage="plus.square.on.square" tint="systemBlue" onPress={withButtonHaptic(addModule, false)} disabled={!resolvedBaseDir || scanning || busy || togglingModuleNames.size > 0} />
-            <ActionTileButton title="更新" systemImage="arrow.triangle.2.circlepath.circle.fill" tint="systemGreen" onPress={withButtonHaptic(downloadAll, false)} disabled={scanning || busy || togglingModuleNames.size > 0 || !filteredModules.length || onlyLocalFiltered} />
-          </HStack>
-          <TextField title="搜索模块" value={query} prompt="搜索模块 · 名称 / 分类" frame={{ maxWidth: "infinity", minHeight: 44 }} onChanged={(value: string): void => setQuery(value)} />
-          <HStack spacing={8}>
-            <Text font="caption" foregroundStyle="secondaryLabel" fixedSize={{ horizontal: false, vertical: true }}>{`${filteredModules.length}/${modules.length} 个模块 · ${scanning ? "读取中…" : stage} · ${remoteStatus}`}</Text>
-            <Spacer />
-            <Button title="刷新" buttonStyle="bordered" font="caption" fixedSize={true} action={withButtonHaptic(async (): Promise<void> => { await refreshModules(true); await refreshRemoteModules(false) })} disabled={scanning || busy || togglingModuleNames.size > 0} />
-          </HStack>
-          {progress !== null ? (
-            <ProgressView
-              value={progress}
-              total={1}
-              progressViewStyle="linear"
-              frame={{ maxWidth: "infinity" }}
-            />
-          ) : null}
+          <VStack spacing={0} listRowInsets={0} listRowSeparator="hidden" listRowBackground={<RoundedRectangle cornerRadius={24} fill="clear" />}>
+            <ResourceOverview count={filteredModules.length} total={modules.length} title={searching ? "搜索结果" : "模块资源库"}
+              detail={`${moduleGroups.length} 个分类 · ${updatesAvailable} 个有更新`}
+              status={scanning ? "正在读取本地文件…" : stage === "就绪" ? searching ? "匹配分类已展开 · 清空搜索恢复折叠" : "刷新检查来源更新 · 侧滑可按来源重下" : stage}
+              connection={remoteStatus === "远程已连接" ? "远程已连接" : remoteStatus === "远程未配置" ? "远程未配置" : remoteStatus === "远程状态读取中" ? "正在连接" : "远程不可用 · 状态未知"}
+              available={remoteStatus === "远程已连接"} working={scanning || busy || togglingModuleNames.size > 0}
+              accent="systemTeal" refreshDisabled={scanning || busy || togglingModuleNames.size > 0}
+              onRefresh={withButtonHaptic(async (): Promise<void> => { await Promise.all([refreshModules(true, true), refreshRemoteModules(false)]) }, false)}>
+              <HStack spacing={10} frame={{ maxWidth: "infinity", height: 50 }}>
+                <ActionTileButton title="添加模块" systemImage="plus" tint="systemTeal" onPress={withButtonHaptic(addModule, false)} disabled={!resolvedBaseDir || scanning || busy || togglingModuleNames.size > 0} />
+                <ActionTileButton title="更新变化" systemImage="arrow.down" tint="systemTeal" onPress={withButtonHaptic(downloadAll, false)} disabled={scanning || busy || togglingModuleNames.size > 0 || updatesAvailable === 0} />
+              </HStack>
+              {progress !== null ? <ProgressView value={progress} total={1} progressViewStyle="linear" /> : null}
+            </ResourceOverview>
+          </VStack>
         </Section>
 
-        <Section
-          header={(
-            <HStack>
-              <Text>
-                {filteredModules.length > 0
-                  ? `模块列表(${filteredModules.length})`
-                  : "模块列表"}
-              </Text>
-              <Spacer />
-              {dirOptions.length > 1 ? (
-                <Picker
-                  title="子文件夹"
-                  pickerStyle="menu"
-                  value={Math.max(0, dirOptions.indexOf(filterDir))}
-                  onChanged={(idx: number) => {
-                    HapticFeedback.heavyImpact()
-                    setFilterDir(dirOptions[idx] ?? "全部")
-                  }}
-                >
-                  {dirOptions.map((d, idx) => (
-                    <Text key={`${d}-${idx}`} tag={idx}>
-                      {d}
-                    </Text>
-                  ))}
-                </Picker>
-              ) : null}
-              <Picker
-                title="筛选分类"
-                pickerStyle="menu"
-                value={filterIdx}
-                onChanged={(idx: number) => {
-                  HapticFeedback.heavyImpact()
-                  setFilterCategory(filterOptions[idx] ?? "全部")
-                }}
-              >
-                {filterOptions.map((c, idx) => (
-                  <Text key={`${c}-${idx}`} tag={idx}>
-                    {c}
-                  </Text>
-                ))}
-              </Picker>
-            </HStack>
-          )}
-        >
+        <Section header={<Text>{searching ? "匹配分类" : "分类浏览"}</Text>}> 
           {filteredModules.length === 0 ? (
-            <Text>暂无模块</Text>
+            <VStack spacing={10} padding={{ vertical: 22 }} frame={{ maxWidth: "infinity" }}>
+              <Image systemName={searching ? "magnifyingglass" : "square.stack.3d.up"} font={28} foregroundStyle="tertiaryLabel" />
+              <Text font="headline">{scanning ? "正在读取模块" : searching ? "没有找到匹配项" : "模块库还是空的"}</Text>
+              <Text font="caption" foregroundStyle="secondaryLabel" multilineTextAlignment="center">{searching ? "试试其他名称、分类或文件夹，也可以清空搜索。" : "添加模块，或在设置中选择模块文件夹。"}</Text>
+            </VStack>
           ) : (
-            filteredModules.map((m) => (
+            moduleGroups.map(group => <DisclosureGroup key={group.id}
+              label={<CategoryLabel title={group.title} count={group.items.length} updates={group.items.filter(m => updateState(m).state === "available").length}
+                pending={group.items.filter(m => ["unchecked", "unknown", "error"].includes(updateState(m).state)).length}
+                searching={searching} expanded={searching || (expandedCategories.get(group.id) ?? !hasCategories)} />}
+              isExpanded={searching || (expandedCategories.get(group.id) ?? !hasCategories)}
+              onChanged={(value: boolean): void => {
+                if (searching) return
+                playFeedback(() => HapticFeedback.selection())
+                animateState(() => setExpandedCategories(previous => new Map(previous).set(group.id, value)))
+              }}>
+            {group.items.map((m) => (
               (() => {
                 const remoteName = getModuleRemoteName(m)
                 return (
@@ -581,6 +565,7 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
                       menuItems: (
                         <Group>
                           <Button title="查看模块" action={withButtonHaptic(() => viewModuleContent(m))} />
+                          <Button title="检查详情" action={withButtonHaptic(async () => { const state = updateState(m); await Dialog.alert({ title: m.name, message: `${state.detail}${state.checkedAt ? `\n检查时间：${new Date(state.checkedAt).toLocaleString()}` : ""}` }) })} />
                           <Button title="复制链接" action={withButtonHaptic(() => copyModuleLink(m))} />
                           <Button title="删除" role="destructive" action={withButtonHaptic(() => deleteModuleFor(m))} />
                         </Group>
@@ -604,18 +589,22 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
                       ],
                     }}
                   >
-                    <HStack>
-                      <VStack alignment="leading" spacing={3}>
-                        <Text font="headline">{m.name}</Text>
-                        {m.category ? (
-                          <Text font="caption" foregroundStyle="secondaryLabel">
-                            {m.category}
-                          </Text>
-                        ) : null}
-                      </VStack>
-                      <Spacer />
+                    <HStack spacing={10} padding={{ vertical: 6 }}>
+                      <Button buttonStyle="plain" action={withButtonHaptic(() => viewModuleContent(m))}
+                        accessibilityLabel={`查看 ${m.name}`} frame={{ maxWidth: "infinity", alignment: "leading" }}>
+                        <VStack alignment="leading" spacing={6}>
+                          <Text font="subheadline" fontWeight="semibold" foregroundStyle="label" lineLimit={2}>{m.name}</Text>
+                          <HStack spacing={5} foregroundStyle="secondaryLabel">
+                            <UpdateBadge status={updateState(m)} />
+                            <Text font="caption2" lineLimit={1}>{`· ${getTopDir(m) || "根目录"}`}</Text>
+                          </HStack>
+                        </VStack>
+                      </Button>
+                      {togglingModuleNames.has(remoteName) ? <ProgressView /> : null}
                       <Toggle
                         title=""
+                        accessibilityLabel={`${m.name} 远程开关`}
+                        accessibilityHint={remoteStatus === "远程已连接" ? "切换 Surge 中的启用状态" : "远程状态未知，暂时不可切换"}
                         value={enabledModuleNames.has(remoteName)}
                         disabled={scanning || !remoteControlReady || remoteStatus !== "远程已连接" || togglingModuleNames.has(remoteName)}
                         toggleStyle="switch"
@@ -624,17 +613,14 @@ export function HomeView(props: { onBusyChanged?: (busy: boolean) => void }) {
                         }}
                       />
                     </HStack>
-                    <HStack spacing={16} buttonStyle="borderless">
-                      <Button title="查看" action={withButtonHaptic(() => viewModuleContent(m))} />
-                      <Spacer />
-                      <Text font="caption2" foregroundStyle="secondaryLabel">{getTopDir(m) || "根目录"}</Text>
-                    </HStack>
                   </VStack>
                 )
               })()
-            ))
+            ))}
+            </DisclosureGroup>)
           )}
         </Section>
     </List>
+    </VStack>
   )
 }
