@@ -174,22 +174,16 @@ async function fetchContentLength(url: string): Promise<number | undefined> {
   const fetchFn: any = (globalThis as any).fetch
   if (typeof fetchFn !== "function") return undefined
 
-  // 1) HEAD 优先
+  // 只为进度提示探测大小。服务器可能忽略 Range，因此不再使用 GET 兜底。
   try {
-    const res = await fetchFn(url, { method: "HEAD" })
-    const len = res?.headers?.get?.("content-length")
-    const n = len != null ? Number(len) : NaN
-    if (Number.isFinite(n) && n > 0) return n
-  } catch {}
-
-  // 2) Range 兜底（部分服务器不允许 HEAD）
-  try {
-    const res = await fetchFn(url, { method: "GET", headers: { Range: "bytes=0-0" } })
-    const cr = res?.headers?.get?.("content-range") ?? res?.headers?.get?.("Content-Range")
-    if (typeof cr === "string") {
-      const m = cr.match(/\/(\d+)\s*$/)
-      const n = m ? Number(m[1]) : NaN
+    const res = await fetchFn(url, { method: "HEAD", timeout: 6 })
+    try {
+      if (!res?.ok) return undefined
+      const len = res.headers?.get?.("content-length")
+      const n = len != null ? Number(len) : NaN
       if (Number.isFinite(n) && n > 0) return n
+    } finally {
+      try { await res?.body?.cancel() } catch {}
     }
   } catch {}
 
