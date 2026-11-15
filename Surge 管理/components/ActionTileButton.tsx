@@ -1,14 +1,5 @@
-import {
-  Button,
-  Image,
-  RoundedRectangle,
-  Spacer,
-  Text,
-  useColorScheme,
-  VStack,
-  ZStack,
-  type ShapeStyle,
-} from "scripting"
+import { Button, GeometryReader, HStack, Image, Text, ZStack, useRef, type GeometryProxy, type ShapeStyle } from "scripting"
+import { supportsGlass, playFeedback } from "../utils/motion"
 
 export function ActionTileButton(props: {
   title: string
@@ -16,66 +7,55 @@ export function ActionTileButton(props: {
   disabled?: boolean
   tint?: ShapeStyle
   onPress: () => void | Promise<void>
-}) {
-  const colorScheme = useColorScheme()
+}): JSX.Element {
+  const pending = useRef<boolean>(false)
   const foreground: ShapeStyle = props.disabled ? "secondaryLabel" : (props.tint ?? "systemBlue")
-  const darkCardFill: ShapeStyle = props.disabled ? "rgba(58,58,60,0.72)" : "rgba(58,58,60,0.96)"
+
+  async function handlePress(): Promise<void> {
+    if (props.disabled || pending.current) return
+    pending.current = true
+    try {
+      const operation = props.onPress()
+      // Feedback acknowledges an accepted press, never the operation's outcome.
+      playFeedback(() => HapticFeedback.softImpact())
+      await operation
+    } finally {
+      pending.current = false
+    }
+  }
 
   return (
-    <Button
-      action={() => {
-        HapticFeedback.mediumImpact()
-        void props.onPress()
+    <ZStack frame={{ maxWidth: "infinity", height: 50 }}>
+    <GeometryReader>
+      {(geometry: GeometryProxy): JSX.Element => {
+        const width: number = Math.max(0, geometry.size.width)
+        return (
+          <Button
+            action={handlePress}
+            disabled={props.disabled}
+            buttonStyle={supportsGlass ? "glass" : "bordered"}
+            buttonBorderShape={{ roundedRectangleRadius: 14 }}
+            controlSize="regular"
+            tint="secondaryLabel"
+            accessibilityLabel={props.title}
+            frame={{ width, height: 50 }}
+            background={{ style: "tertiarySystemFill", shape: { type: "rect", cornerRadius: 15 } }}
+          >
+            <HStack spacing={8} frame={{ width: Math.max(0, width - 24), height: 36 }}>
+              <Image
+                systemName={props.systemImage}
+                font={18}
+                foregroundStyle={foreground}
+                accessibilityHidden
+              />
+              <Text font="headline" lineLimit={1} minScaleFactor={0.85} foregroundStyle={props.disabled ? "secondaryLabel" : "label"}>
+                {props.title}
+              </Text>
+            </HStack>
+          </Button>
+        )
       }}
-      disabled={props.disabled}
-      buttonStyle="plain"
-      frame={{ maxWidth: "infinity", minHeight: 96 }}
-    >
-      {colorScheme === "dark" ? (
-        <ZStack
-          frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-          background={"rgba(0,0,0,0.001)"}
-        >
-          <RoundedRectangle
-            cornerRadius={16}
-            fill={darkCardFill}
-            stroke={"separator"}
-            frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-          />
-          <VStack
-            frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-            padding
-            spacing={8}
-          >
-            <Spacer />
-            <Image systemName={props.systemImage} font="title2" foregroundStyle={foreground} />
-            <Text font="headline" foregroundStyle={foreground}>
-              {props.title}
-            </Text>
-            <Spacer />
-          </VStack>
-        </ZStack>
-      ) : (
-        <VStack
-          frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-          padding
-          spacing={8}
-          background={{ style: "secondarySystemBackground", shape: { type: "rect", cornerRadius: 16 } }}
-        >
-          <VStack
-            frame={{ maxWidth: "infinity", maxHeight: "infinity" }}
-            background={"rgba(0,0,0,0.001)"}
-            spacing={8}
-          >
-            <Spacer />
-            <Image systemName={props.systemImage} font="title2" foregroundStyle={foreground} />
-            <Text font="headline" foregroundStyle={foreground}>
-              {props.title}
-            </Text>
-            <Spacer />
-          </VStack>
-        </VStack>
-      )}
-    </Button>
+    </GeometryReader>
+    </ZStack>
   )
 }
