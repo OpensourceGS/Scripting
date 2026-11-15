@@ -2,6 +2,7 @@ import { Path } from "scripting"
 import { moduleFilePath, ensureStorage, type ModuleInfo, getModulesDirResolved } from "./storage"
 import { loadConfig } from "./config"
 import { downloadWithProgress } from "./stream_downloader"
+import { invalidateUpdateState } from "./update_check"
 
 function injectNameFlag(content: string): string {
   if (content.includes("🔗")) return content
@@ -74,6 +75,7 @@ export async function downloadModule(info: ModuleInfo & { linkPrefix?: string; o
 
   const path = moduleFilePath(info.name, targetDir)
   await fm.writeAsString(path, content)
+  invalidateUpdateState(path, "module")
 
   try {
     if (typeof fm.remove === "function") await fm.remove(tmpPath)
