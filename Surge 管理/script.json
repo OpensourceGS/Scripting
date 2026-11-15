@@ -1,42 +1,44 @@
 {
-  "runInApp": false,
-  "author": {
-    "email": null,
-    "name": "Soon Will",
-    "homepage": null
+  "iconImage" : "https:\/\/raw.githubusercontent.com\/BlackCCCat\/Scripting-Scripts\/refs\/heads\/main\/src\/Surge-Module-Manager.PNG",
+  "intentInputTypes" : [
+
+  ],
+  "name" : "Surge 管理工具",
+  "description" : "surge 的模块，分流本地管理工具",
+  "localizedDescriptions" : {
+    "ja" : "",
+    "it" : "",
+    "es" : "",
+    "fr" : "",
+    "ru" : "",
+    "en" : "",
+    "de" : "",
+    "zh" : "",
+    "pt" : ""
   },
-  "intentInputTypes": [],
-  "remoteResource": null,
-  "name": "Surge 管理 ",
-  "description": "surge 的模块，分流本地管理工具",
-  "permissions": null,
-  "icon": "square.grid.2x2.fill",
-  "color": "rgba(28, 140, 255,1)",
-  "localizedNames": {
-    "zh": "",
-    "it": "",
-    "ja": "",
-    "pt": "",
-    "es": "",
-    "ru": "",
-    "fr": "",
-    "en": "",
-    "de": ""
+  "runInApp" : false,
+  "author" : {
+    "homepage" : null,
+    "name" : "Soon Will",
+    "email" : null
   },
-  "contributors": [],
-  "entry": "index.tsx",
-  "localizedDescriptions": {
-    "zh": "",
-    "ja": "",
-    "it": "",
-    "ru": "",
-    "en": "",
-    "pt": "",
-    "fr": "",
-    "es": "",
-    "de": ""
+  "permissions" : null,
+  "entry" : "index.tsx",
+  "localizedNames" : {
+    "ja" : "",
+    "it" : "",
+    "zh" : "",
+    "de" : "",
+    "fr" : "",
+    "es" : "",
+    "en" : "",
+    "pt" : "",
+    "ru" : ""
   },
-  "remoteDefinitionId": null,
-  "iconImage": "https://raw.githubusercontent.com/BlackCCCat/Scripting-Scripts/refs/heads/main/src/Surge-Module-Manager.PNG",
-  "version": "2.1.5"
+  "color" : "rgba(28, 140, 255,1)",
+  "contributors" : [
+
+  ],
+  "version" : "2.1.5",
+  "icon" : "square.grid.2x2.fill"
 }
