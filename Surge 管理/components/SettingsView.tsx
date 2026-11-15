@@ -8,6 +8,7 @@ import {
   SecureField,
   Text,
   TextField,
+  Toggle,
   VStack,
   HStack,
   Spacer,
@@ -15,6 +16,7 @@ import {
   Menu,
   Image,
   useEffect,
+  useObservable,
   useState,
 } from "scripting"
 
@@ -27,6 +29,7 @@ import {
 import { countModulesByCategory, loadCategoriesFromModules, renameCategoryInModules } from "../utils/storage"
 import { savedBookmark, storeBookmark } from "../utils/resources"
 import { type ResourceKind, resourceLabel } from "../utils/resource_policy"
+import { REDUCE_MOTION_KEY, motionEnabled } from "../utils/motion"
 
 function PlainRowButton(props: { title: string; onPress: () => void }) {
   return (
@@ -58,8 +61,15 @@ export function SettingsView(props: {
 
   const [bookmarks, setBookmarks] = useState<{ name: string; path: string }[]>([])
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({})
+  // 不启用 ForEach 自动删除；自定义侧滑按钮会先确认，再更新配置。
+  const categoryRows = useObservable(() => cfg.categories.map(id => ({ id, count: 0 })))
+
+  useEffect(() => {
+    categoryRows.value = cfg.categories.map(id => ({ id, count: categoryCounts[id] ?? 0 }))
+  }, [cfg.categories, categoryCounts])
   const [ruleBookmark, setRuleBookmark] = useState<string>(() => savedBookmark("rule"))
   const [authorizing, setAuthorizing] = useState<boolean>(false)
+  const [reduceMotion, setReduceMotion] = useState<boolean>(() => !motionEnabled())
 
   const concurrencyOptions = Array.from({ length: 10 }, (_, idx) => idx + 1)
 
@@ -205,18 +215,11 @@ export function SettingsView(props: {
     await refreshCounts()
   }
 
-async function deleteCategoryAt(indices: number[]): Promise<void> {
-    if (!indices.length) return
+  async function deleteCategory(name: string): Promise<void> {
     if (!(await Dialog.confirm({ title: "删除分类", message: "仅删除分类列表项，不删除模块文件。继续？" }))) return
     HapticFeedback.heavyImpact()
-    setCfg((c) => {
-      const next = [...(c.categories ?? [])]
-      const sorted = [...indices].sort((a, b) => b - a)
-      for (const i of sorted) {
-        if (i >= 0 && i < next.length) next.splice(i, 1)
-      }
-      return { ...c, categories: next }
-    })
+    // 按稳定标识删除，避免确认弹窗期间列表变化导致索引指向另一分类。
+    setCfg((c) => ({ ...c, categories: c.categories.filter(category => category !== name) }))
     void refreshCounts()
   }
 
@@ -270,6 +273,13 @@ async function deleteCategoryAt(indices: number[]): Promise<void> {
             />
           </Section>
 
+          <Section header={<Text>交互体验</Text>} footer={<Text>立即保存。关闭自定义滑块、数字和聚焦动效；系统控件仍使用系统反馈。</Text>}>
+            <Toggle title="减弱动效" value={reduceMotion} onChanged={(value: boolean): void => {
+              Storage.set(REDUCE_MOTION_KEY, value)
+              setReduceMotion(value)
+            }} />
+          </Section>
+
           <Section header={<Text>下载设置</Text>}>
             <Picker
               title={"并发下载数"}
@@ -294,33 +304,35 @@ async function deleteCategoryAt(indices: number[]): Promise<void> {
               <Text>暂无分类</Text>
             ) : (
               <ForEach
-                count={cfg.categories.length}
-                onDelete={(indices) => deleteCategoryAt(indices)}
-                  itemBuilder={(index) => {
-                    const cat = cfg.categories[index]
-                    const count = categoryCounts[cat] ?? 0
-                    return (
-                      <HStack
-                        key={cat}
-                        leadingSwipeActions={{
-                          allowsFullSwipe: false,
-                          actions: [
-                            <Button
-                              title="编辑"
-                              action={() => {
-                                HapticFeedback.mediumImpact()
-                                editCategory(cat)
-                              }}
-                            />,
-                          ],
-                        }}
-                      >
-                        <Text>{cat}</Text>
-                        <Spacer />
-                        <Text>{count}</Text>
-                      </HStack>
-                    )
-                  }}
+                data={categoryRows}
+                editActions={null}
+                builder={(item) => (
+                  <HStack
+                    key={item.id}
+                    leadingSwipeActions={{
+                      allowsFullSwipe: false,
+                      actions: [
+                        <Button
+                          title="编辑"
+                          action={() => {
+                            HapticFeedback.mediumImpact()
+                            void editCategory(item.id)
+                          }}
+                        />,
+                      ],
+                    }}
+                    trailingSwipeActions={{
+                      allowsFullSwipe: false,
+                      actions: [
+                        <Button title="删除" role="destructive" action={() => { void deleteCategory(item.id) }} />,
+                      ],
+                    }}
+                  >
+                    <Text>{item.id}</Text>
+                    <Spacer />
+                    <Text>{item.count}</Text>
+                  </HStack>
+                )}
               />
             )}
           </Section>
