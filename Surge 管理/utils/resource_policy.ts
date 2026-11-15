@@ -5,7 +5,8 @@ export function resourceLabel(kind: ResourceKind): string {
   return kind === "module" ? "模块" : "分流"
 }
 
-export function validateURL(raw: string): string {
+export function validateURL(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("请输入 HTTP / HTTPS 下载链接，不能为空")
   const value: string = raw.trim()
   if (!/^https?:\/\/[^\s/?#]+(?:[/?#][^\s]*)?$/i.test(value)) {
     throw new Error("请输入有效的 HTTP / HTTPS 下载链接")
@@ -13,7 +14,8 @@ export function validateURL(raw: string): string {
   return value
 }
 
-export function validateFileName(raw: string, kind: ResourceKind): string {
+export function validateFileName(raw: unknown, kind: ResourceKind): string {
+  if (typeof raw !== "string" || !raw.trim()) throw new Error("请输入有效的文件名，不能为空")
   const name: string = raw.trim()
   if (!name || name.startsWith(".") || /[/\\\x00-\x1f\x7f:]/.test(name) || name.length > 180) {
     throw new Error("文件名不能为空、以点开头或包含路径分隔符等特殊字符（最多 180 字符）")
